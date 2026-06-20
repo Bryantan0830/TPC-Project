@@ -36,7 +36,7 @@ namespace ParallelKMeansMRI
                     HardwareComboBox.Items.Add($"{device.Name} ({device.AcceleratorType})");
                 }
                 HardwareComboBox.SelectedIndex = 1 < HardwareComboBox.Items.Count ? 1 : 0;
-                
+
                 ImagePathTextBox.Text = Path.Combine(KMeansEngine.CANCER_FOLDER, "Cancer (1).jpg");
                 StatusText.Text = "Ready";
             }
@@ -58,7 +58,7 @@ namespace ParallelKMeansMRI
             openFileDialog.Title = "Select MRI Image";
             openFileDialog.Filter = "Image Files (*.jpg;*.png;*.tif;*.bmp)|*.jpg;*.png;*.tif;*.bmp|All Files (*.*)|*.*";
             openFileDialog.InitialDirectory = Path.GetFullPath("Brain Tumor Data Set");
-            
+
             if (openFileDialog.ShowDialog() == true)
             {
                 ImagePathTextBox.Text = openFileDialog.FileName;
@@ -89,12 +89,18 @@ namespace ParallelKMeansMRI
             try
             {
                 // Show original image
-                OriginalImage.Source = new BitmapImage(new Uri(Path.GetFullPath(imagePath)));
+                BitmapImage origBitmap = new BitmapImage();
+                origBitmap.BeginInit();
+                origBitmap.CacheOption = BitmapCacheOption.OnLoad; // 这一句保命，防止文件被锁！
+                origBitmap.UriSource = new Uri(Path.GetFullPath(imagePath));
+                origBitmap.EndInit();
+                OriginalImage.Source = origBitmap;
+                // OriginalImage.Source = new BitmapImage(new Uri(Path.GetFullPath(imagePath)));
 
                 var result = await Task.Run(() => KMeansEngine.RunBenchmark(imagePath, _context, selectedDevice));
 
                 ResultsDataGrid.ItemsSource = result.Results;
-                
+
                 string safeDeviceName = selectedDevice != null ? new string(selectedDevice.Name.Where(c => char.IsLetterOrDigit(c)).ToArray()) : "CPU";
                 string savePath = Path.Combine(KMeansEngine.OUTPUT_FOLDER, "segmented_" + Path.GetFileNameWithoutExtension(imagePath) + "_" + safeDeviceName + ".jpg");
 
