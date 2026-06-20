@@ -7,6 +7,7 @@ using System.Windows.Media.Imaging;
 using ILGPU;
 using ILGPU.Runtime;
 using System.Collections.Generic;
+using Microsoft.Win32;
 
 namespace ParallelKMeansMRI
 {
@@ -35,6 +36,8 @@ namespace ParallelKMeansMRI
                     HardwareComboBox.Items.Add($"{device.Name} ({device.AcceleratorType})");
                 }
                 HardwareComboBox.SelectedIndex = 1 < HardwareComboBox.Items.Count ? 1 : 0;
+                
+                ImagePathTextBox.Text = Path.Combine(KMeansEngine.CANCER_FOLDER, "Cancer (1).jpg");
                 StatusText.Text = "Ready";
             }
             catch (Exception ex)
@@ -49,15 +52,33 @@ namespace ParallelKMeansMRI
             base.OnClosed(e);
         }
 
+        private void BrowseButton_Click(object sender, RoutedEventArgs e)
+        {
+            OpenFileDialog openFileDialog = new OpenFileDialog();
+            openFileDialog.Title = "Select MRI Image";
+            openFileDialog.Filter = "Image Files (*.jpg;*.png;*.tif;*.bmp)|*.jpg;*.png;*.tif;*.bmp|All Files (*.*)|*.*";
+            openFileDialog.InitialDirectory = Path.GetFullPath("Brain Tumor Data Set");
+            
+            if (openFileDialog.ShowDialog() == true)
+            {
+                ImagePathTextBox.Text = openFileDialog.FileName;
+            }
+        }
+
         private async void RunButton_Click(object sender, RoutedEventArgs e)
         {
             RunButton.IsEnabled = false;
             ResultsDataGrid.ItemsSource = null;
             StatusText.Text = "Running benchmark... Please wait.";
 
-            string imagePath = ImageComboBox.SelectedIndex == 0
-                ? Path.Combine(KMeansEngine.CANCER_FOLDER, "Cancer (1).jpg")
-                : Path.Combine(KMeansEngine.NOT_CANCER_FOLDER, "Not Cancer  (1).jpg");
+            string imagePath = ImagePathTextBox.Text;
+
+            if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            {
+                StatusText.Text = "Error: Please select a valid image file first.";
+                RunButton.IsEnabled = true;
+                return;
+            }
 
             Device selectedDevice = null;
             if (HardwareComboBox.SelectedIndex > 0)

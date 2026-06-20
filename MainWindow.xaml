@@ -18,10 +18,14 @@
                 <TextBlock Text="Settings" FontSize="20" FontWeight="Bold" Margin="0,0,0,15"/>
 
                 <TextBlock Text="Select Image" FontWeight="SemiBold" Margin="0,0,0,5"/>
-                <ComboBox x:Name="ImageComboBox" SelectedIndex="0" Margin="0,0,0,15" Padding="5">
-                    <ComboBoxItem Content="Cancer MRI" />
-                    <ComboBoxItem Content="Healthy MRI" />
-                </ComboBox>
+                <Grid Margin="0,0,0,15">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="ImagePathTextBox" Grid.Column="0" IsReadOnly="True" Margin="0,0,5,0" Padding="5" VerticalContentAlignment="Center" />
+                    <Button x:Name="BrowseButton" Grid.Column="1" Content="Browse..." Padding="10,5" Click="BrowseButton_Click" Cursor="Hand"/>
+                </Grid>
 
                 <TextBlock Text="Select Hardware (ILGPU)" FontWeight="SemiBold" Margin="0,0,0,5"/>
                 <ComboBox x:Name="HardwareComboBox" Margin="0,0,0,20" Padding="5">
