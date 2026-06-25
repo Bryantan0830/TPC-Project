@@ -8,6 +8,8 @@ using ILGPU;
 using ILGPU.Runtime;
 using System.Collections.Generic;
 using Microsoft.Win32;
+// 如果你想要在后台控制文字颜色，可以加上这个
+using System.Windows.Media;
 
 namespace ParallelKMeansMRI
 {
@@ -69,12 +71,14 @@ namespace ParallelKMeansMRI
         {
             RunButton.IsEnabled = false;
             ResultsDataGrid.ItemsSource = null;
+            StatusText.Foreground = Brushes.Black; // 重置颜色
             StatusText.Text = "Running benchmark... Please wait.";
 
             string imagePath = ImagePathTextBox.Text;
 
             if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
             {
+                StatusText.Foreground = Brushes.Red;
                 StatusText.Text = "Error: Please select a valid image file first.";
                 RunButton.IsEnabled = true;
                 return;
@@ -91,20 +95,21 @@ namespace ParallelKMeansMRI
                 // Show original image
                 BitmapImage origBitmap = new BitmapImage();
                 origBitmap.BeginInit();
-                origBitmap.CacheOption = BitmapCacheOption.OnLoad; // 这一句保命，防止文件被锁！
+                origBitmap.CacheOption = BitmapCacheOption.OnLoad; // 防锁死
                 origBitmap.UriSource = new Uri(Path.GetFullPath(imagePath));
                 origBitmap.EndInit();
                 OriginalImage.Source = origBitmap;
-                // OriginalImage.Source = new BitmapImage(new Uri(Path.GetFullPath(imagePath)));
 
+                // 后台执行高强度的 5 大算法 Benchmark
                 var result = await Task.Run(() => KMeansEngine.RunBenchmark(imagePath, _context, selectedDevice));
 
+                // 将底层数据绑定给 DataGrid 供评委审查
                 ResultsDataGrid.ItemsSource = result.Results;
 
                 string safeDeviceName = selectedDevice != null ? new string(selectedDevice.Name.Where(c => char.IsLetterOrDigit(c)).ToArray()) : "CPU";
                 string savePath = Path.Combine(KMeansEngine.OUTPUT_FOLDER, "segmented_" + Path.GetFileNameWithoutExtension(imagePath) + "_" + safeDeviceName + ".jpg");
 
-                // Show segmented image
+                // Show segmented image (最终的 Predict 结果)
                 BitmapImage bitmap = new BitmapImage();
                 bitmap.BeginInit();
                 bitmap.CacheOption = BitmapCacheOption.OnLoad;
@@ -112,10 +117,20 @@ namespace ParallelKMeansMRI
                 bitmap.EndInit();
                 SegmentedImage.Source = bitmap;
 
-                StatusText.Text = "Benchmark completed successfully.";
+
+                var optimalAlgorithm = result.Results
+                    .Where(r => r.TimeMs > 0)
+                    .OrderBy(r => r.TimeMs)
+                    .First();
+
+
+                StatusText.Foreground = Brushes.DarkGreen;
+                StatusText.Text = $"AI Smart Dispatcher auto-selected optimal architecture [{optimalAlgorithm.AlgorithmName}]. Inference time: {optimalAlgorithm.TimeMs} ms.";
+
             }
             catch (Exception ex)
             {
+                StatusText.Foreground = Brushes.Red;
                 StatusText.Text = $"Error: {ex.Message}";
             }
             finally
