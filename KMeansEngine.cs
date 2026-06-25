@@ -413,115 +413,149 @@ namespace ParallelKMeansMRI
             }
         }
 
-        // ================= 全新的目标检测(Bounding Box)渲染引擎 =================
+        // ================= 智能目标检测(Bounding Box)渲染引擎 V3.0 =================
         public static void SaveColorHighlightedImage(byte[] pixels, int width, int height, string path)
         {
-            byte maxIntensity = pixels.Max();
-
-            // 1. BFS 算法：寻找“最大连通区域” (Connected Component Analysis)
-            int largestArea = 0;
-            int bestMinX = width, bestMaxX = 0, bestMinY = height, bestMaxY = 0;
-            bool[] visited = new bool[width * height];
-
-            // 【新增绝杀技：大脑核心椭圆数学遮罩 (Elliptical Brain Core Mask)】
-            double centerX = width / 2.0;
-            double centerY = height / 2.0;
-            // 横向屏蔽左右外圈各 10%，纵向屏蔽上下外圈各 6%
-            double rx2 = Math.Pow(width * 0.40, 2);
-            double ry2 = Math.Pow(height * 0.44, 2);
-
+            // 1. 【动态大脑轮廓提取】：自动计算当前图片中“人头”的实际大小，而不是用写死的值
+            int headMinX = width, headMaxX = 0, headMinY = height, headMaxY = 0;
             for (int y = 0; y < height; y++)
             {
                 for (int x = 0; x < width; x++)
                 {
-                    int idx = y * width + x;
-
-                    if (pixels[idx] == maxIntensity && !visited[idx])
+                    if (pixels[y * width + x] > 20) // 灰度大于20认为是非背景（大脑或头骨）
                     {
-                        // 【防线 1：阻断起始点】计算该像素是否在安全椭圆内部
-                        // 如果越界（到达头骨边缘），直接丢弃，绝不作为 BFS 的起点！
-                        double dx = x - centerX;
-                        double dy = y - centerY;
-                        if ((dx * dx) / rx2 + (dy * dy) / ry2 > 1.0)
-                        {
-                            visited[idx] = true;
-                            continue;
-                        }
-
-                        int area = 0;
-                        int minX = x, maxX = x, minY = y, maxY = y;
-                        Queue<int> q = new Queue<int>();
-                        q.Enqueue(idx);
-                        visited[idx] = true;
-
-                        while (q.Count > 0)
-                        {
-                            int curr = q.Dequeue();
-                            area++;
-                            int cx = curr % width;
-                            int cy = curr / width;
-
-                            // 更新这个病灶块的边界
-                            if (cx < minX) minX = cx;
-                            if (cx > maxX) maxX = cx;
-                            if (cy < minY) minY = cy;
-                            if (cy > maxY) maxY = cy;
-
-                            // 扫描上下左右的邻居像素
-                            int[] dx_arr = { -1, 1, 0, 0 };
-                            int[] dy_arr = { 0, 0, -1, 1 };
-                            for (int i = 0; i < 4; i++)
-                            {
-                                int nx = cx + dx_arr[i];
-                                int ny = cy + dy_arr[i];
-                                if (nx >= 0 && nx < width && ny >= 0 && ny < height)
-                                {
-                                    int nIdx = ny * width + nx;
-                                    if (pixels[nIdx] == maxIntensity && !visited[nIdx])
-                                    {
-                                        // 【防线 2：斩断蔓延】
-                                        // 即使内部肿瘤蔓延到了头骨，也会被这条数学函数组成的“空气墙”强行切断！
-                                        double ndx = nx - centerX;
-                                        double ndy = ny - centerY;
-                                        if ((ndx * ndx) / rx2 + (ndy * ndy) / ry2 > 1.0)
-                                        {
-                                            visited[nIdx] = true;
-                                            continue;
-                                        }
-
-                                        visited[nIdx] = true;
-                                        q.Enqueue(nIdx);
-                                    }
-                                }
-                            }
-                        }
-
-                        // 如果这块亮斑的面积比之前找到的都大，记录下来
-                        if (area > largestArea)
-                        {
-                            largestArea = area;
-                            bestMinX = minX;
-                            bestMaxX = maxX;
-                            bestMinY = minY;
-                            bestMaxY = maxY;
-                        }
+                        if (x < headMinX) headMinX = x;
+                        if (x > headMaxX) headMaxX = x;
+                        if (y < headMinY) headMinY = y;
+                        if (y > headMaxY) headMaxY = y;
                     }
                 }
             }
+            // 异常处理：如果是纯黑图片
+            if (headMaxX <= headMinX) { headMinX = 0; headMaxX = width; headMinY = 0; headMaxY = height; }
 
-            // 2. 图像渲染与画框 (Drawing Bounding Box)
+            int headArea = (headMaxX - headMinX) * (headMaxY - headMinY);
+            double centerX = (headMinX + headMaxX) / 2.0;
+            double centerY = (headMinY + headMaxY) / 2.0;
+
+            // 构建自适应椭圆遮罩：长宽为主体头骨的 38% 和 40%，完美避开外围极亮的头皮脂肪
+            double rx2 = Math.Pow((headMaxX - headMinX) * 0.38, 2);
+            double ry2 = Math.Pow((headMaxY - headMinY) * 0.40, 2);
+
+            // 2. 【智能多聚类搜索】：提取 K-Means 分配好的 4 种聚类亮度，并从亮到暗排序
+            var uniqueClusters = pixels.Distinct().OrderByDescending(v => v).ToList();
+
+            bool isTumorFound = false;
+            byte targetIntensity = 0;
+            int bestMinX = width, bestMaxX = 0, bestMinY = height, bestMaxY = 0;
+            bool[] visited = new bool[width * height];
+
+            // 从最亮的一级开始往下搜索
+            foreach (byte intensity in uniqueClusters)
+            {
+                // 如果搜索到了偏暗的正常脑组织（如灰质/白质），直接停止，防止误报
+                if (intensity < 120) continue;
+
+                int largestArea = 0;
+                int currentBestMinX = width, currentBestMaxX = 0, currentBestMinY = height, currentBestMaxY = 0;
+                Array.Clear(visited, 0, visited.Length);
+
+                for (int y = 0; y < height; y++)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        int idx = y * width + x;
+
+                        if (pixels[idx] == intensity && !visited[idx])
+                        {
+                            // 遇到属于当前亮度的像素点，先判断是否在自适应安全椭圆内
+                            double dx = x - centerX;
+                            double dy = y - centerY;
+                            if ((dx * dx) / rx2 + (dy * dy) / ry2 > 1.0)
+                            {
+                                visited[idx] = true;
+                                continue;
+                            }
+
+                            int area = 0;
+                            int minX = x, maxX = x, minY = y, maxY = y;
+                            Queue<int> q = new Queue<int>();
+                            q.Enqueue(idx);
+                            visited[idx] = true;
+
+                            while (q.Count > 0)
+                            {
+                                int curr = q.Dequeue();
+                                area++;
+                                int cx = curr % width;
+                                int cy = curr / width;
+
+                                if (cx < minX) minX = cx;
+                                if (cx > maxX) maxX = cx;
+                                if (cy < minY) minY = cy;
+                                if (cy > maxY) maxY = cy;
+
+                                int[] dx_arr = { -1, 1, 0, 0 };
+                                int[] dy_arr = { 0, 0, -1, 1 };
+                                for (int i = 0; i < 4; i++)
+                                {
+                                    int nx = cx + dx_arr[i];
+                                    int ny = cy + dy_arr[i];
+                                    if (nx >= 0 && nx < width && ny >= 0 && ny < height)
+                                    {
+                                        int nIdx = ny * width + nx;
+                                        if (pixels[nIdx] == intensity && !visited[nIdx])
+                                        {
+                                            // 蔓延边界限制：斩断与头骨的物理连接
+                                            double ndx = nx - centerX;
+                                            double ndy = ny - centerY;
+                                            if ((ndx * ndx) / rx2 + (ndy * ndy) / ry2 > 1.0)
+                                            {
+                                                visited[nIdx] = true;
+                                                continue;
+                                            }
+
+                                            visited[nIdx] = true;
+                                            q.Enqueue(nIdx);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (area > largestArea)
+                            {
+                                largestArea = area;
+                                currentBestMinX = minX; currentBestMaxX = maxX;
+                                currentBestMinY = minY; currentBestMaxY = maxY;
+                            }
+                        }
+                    }
+                }
+
+                // 临床判定绝杀：
+                // 1. 面积必须大于大脑总面积的 0.1% (排除零星噪点)
+                // 2. 面积必须小于大脑总面积的 15% (防止将正常的高亮白质误判为肿瘤)
+                if (largestArea > (headArea * 0.001) && largestArea < (headArea * 0.15))
+                {
+                    isTumorFound = true;
+                    targetIntensity = intensity; // 锁定！这就是引发肿瘤病变的聚类层级！
+                    bestMinX = currentBestMinX;
+                    bestMaxX = currentBestMaxX;
+                    bestMinY = currentBestMinY;
+                    bestMaxY = currentBestMaxY;
+                    break; // 既然在高亮度里找到了肿瘤，就停止往下搜索更暗的图层
+                }
+            }
+
+            // 3. 图像渲染与画框 (Drawing Bounding Box)
             using (Bitmap bmp = new Bitmap(width, height, PixelFormat.Format24bppRgb))
             {
                 BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
                 int bytes = Math.Abs(bmpData.Stride) * bmp.Height;
                 byte[] rgbValues = new byte[bytes];
 
-                // 临床判定逻辑：肿瘤必须足够亮(>150)，且面积超过总像素的 0.1%
-                // 由于头骨已被数学遮罩彻底抹除，此时剩下的最大高亮块绝对是肿瘤，假阳性率为 0%！
-                bool isTumorFound = (largestArea > (width * height * 0.001)) && (maxIntensity > 150);
-
-                int padding = 6; // 框离肿瘤的边缘距离
-                int thickness = 3; // 红色框的线条粗细
+                int padding = 6;
+                int thickness = 3;
 
                 for (int y = 0; y < height; y++)
                 {
@@ -531,14 +565,13 @@ namespace ParallelKMeansMRI
                         int byteIndex = y * bmpData.Stride + x * 3;
                         byte currentIntensity = pixels[pixelIndex];
 
-                        // 默认背景：灰度输出，展示原始的 K-Means 分层结构
+                        // 默认背景灰度
                         rgbValues[byteIndex] = currentIntensity;     // Blue
                         rgbValues[byteIndex + 1] = currentIntensity; // Green
                         rgbValues[byteIndex + 2] = currentIntensity; // Red
 
                         if (isTumorFound)
                         {
-                            // 计算当前像素是否在边界框 (Bounding Box) 的线条上
                             bool isBorderY = (y >= bestMinY - padding - thickness && y <= bestMinY - padding) ||
                                              (y >= bestMaxY + padding && y <= bestMaxY + padding + thickness);
                             bool isBorderX = (x >= bestMinX - padding - thickness && x <= bestMinX - padding) ||
@@ -549,13 +582,12 @@ namespace ParallelKMeansMRI
 
                             if ((isBorderY && withinBoxX) || (isBorderX && withinBoxY))
                             {
-                                // 命中边界框线条：画出极其专业的纯红色方框
                                 rgbValues[byteIndex] = 0;
                                 rgbValues[byteIndex + 1] = 0;
                                 rgbValues[byteIndex + 2] = 255;
                             }
-                            // 将框内的实质肿瘤像素蒙上红色 (Segmentation Mask)
-                            else if (currentIntensity == maxIntensity && x >= bestMinX && x <= bestMaxX && y >= bestMinY && y <= bestMaxY)
+                            // 只有当该像素的亮度等于我们在上方锁定的【肿瘤亮度层级】时，才会被蒙上红膜
+                            else if (currentIntensity == targetIntensity && x >= bestMinX && x <= bestMaxX && y >= bestMinY && y <= bestMaxY)
                             {
                                 rgbValues[byteIndex] = 70;
                                 rgbValues[byteIndex + 1] = 70;
