@@ -8,7 +8,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Concurrent;
-using System.Collections.Generic; // 必须引入这个来使用 Queue
+using System.Collections.Generic;
 using ILGPU;
 using ILGPU.Runtime;
 using ILGPU.Runtime.CPU;
@@ -36,9 +36,9 @@ namespace ParallelKMeansMRI
     {
         public static readonly string CANCER_FOLDER = @"Brain Tumor Data Set\Brain Tumor\";
         public static readonly string NOT_CANCER_FOLDER = @"Brain Tumor Data Set\Healthy\";
-        public static readonly string OUTPUT_FOLDER = @"Data\Output\";
 
-        public static BenchmarkSummary RunBenchmark(string testImagePath, Context context, Device selectedDevice)
+        // 【核心修改 1】：加入了 outputFolder 参数
+        public static BenchmarkSummary RunBenchmark(string testImagePath, Context context, Device selectedDevice, string outputFolder)
         {
             if (!File.Exists(testImagePath))
                 throw new FileNotFoundException($"Cannot find: {testImagePath}");
@@ -103,16 +103,16 @@ namespace ParallelKMeansMRI
 
             if (finalResult == null)
             {
-                finalResult = SequentialKMeans(pixels, k, iterations); // Fallback
+                finalResult = SequentialKMeans(pixels, k, iterations);
             }
             summary.FinalImagePixels = finalResult;
 
-            if (!Directory.Exists(OUTPUT_FOLDER)) Directory.CreateDirectory(OUTPUT_FOLDER);
+            // 【核心修改 2】：使用用户自定义的 outputFolder 进行图片保存
+            if (!Directory.Exists(outputFolder)) Directory.CreateDirectory(outputFolder);
             string originalFileName = Path.GetFileNameWithoutExtension(testImagePath);
             string safeDeviceName = selectedDevice != null ? new string(selectedDevice.Name.Where(c => char.IsLetterOrDigit(c)).ToArray()) : "CPU";
-            string savePath = Path.Combine(OUTPUT_FOLDER, "segmented_" + originalFileName + "_" + safeDeviceName + ".jpg");
+            string savePath = Path.Combine(outputFolder, "segmented_" + originalFileName + "_" + safeDeviceName + ".jpg");
 
-            // 使用全新的目标检测画框渲染引擎！
             SaveColorHighlightedImage(finalResult, width, height, savePath);
 
             return summary;
@@ -120,7 +120,6 @@ namespace ParallelKMeansMRI
 
         // ================= ALGORITHM IMPLEMENTATIONS =================
 
-        // [0] Baseline Sequential
         static byte[] SequentialKMeans(byte[] pixels, int k, int maxIterations)
         {
             int[] centroids = InitializeCentroids(k);
@@ -141,7 +140,6 @@ namespace ParallelKMeansMRI
             return ApplyCentroids(pixels, assignments, centroids);
         }
 
-        // [1] Alg 1: Basic Parallel with Global Lock
         static byte[] ParallelKMeansBasic(byte[] pixels, int k, int maxIterations)
         {
             int[] centroids = InitializeCentroids(k);
@@ -166,7 +164,6 @@ namespace ParallelKMeansMRI
             return ApplyCentroids(pixels, assignments, centroids);
         }
 
-        // [2] Alg 2: ThreadLocal Optimized
         static byte[] ParallelKMeansThreadLocal(byte[] pixels, int k, int maxIterations)
         {
             int[] centroids = InitializeCentroids(k);
@@ -199,7 +196,6 @@ namespace ParallelKMeansMRI
             return ApplyCentroids(pixels, assignments, centroids);
         }
 
-        // [3] Alg 3: Data Partitioning Parallel (Chunks)
         static byte[] ParallelKMeansPartitioned(byte[] pixels, int k, int maxIterations)
         {
             int[] centroids = InitializeCentroids(k);
@@ -230,7 +226,6 @@ namespace ParallelKMeansMRI
             return ApplyCentroids(pixels, assignments, centroids);
         }
 
-        // [4] Alg 4: Task-Based Asynchronous Parallel
         static byte[] ParallelKMeansTaskBased(byte[] pixels, int k, int maxIterations)
         {
             int[] centroids = InitializeCentroids(k);
@@ -272,7 +267,6 @@ namespace ParallelKMeansMRI
             return ApplyCentroids(pixels, assignments, centroids);
         }
 
-        // [5] Alg 5: ILGPU Accelerator Parallel
         static byte[] ParallelKMeansILGPU(Accelerator accelerator, byte[] pixels, int k, int maxIterations)
         {
             int[] centroids = InitializeCentroids(k);
@@ -367,7 +361,6 @@ namespace ParallelKMeansMRI
             return result;
         }
 
-        // 强悍的加载方法：抹除所有 Stride Padding，确保获得严丝合缝的一维数组
         public static byte[] LoadImageToByteArray(string path, out int width, out int height)
         {
             using (Bitmap original = new Bitmap(path))
@@ -376,7 +369,6 @@ namespace ParallelKMeansMRI
                 height = original.Height;
                 byte[] grayValues = new byte[width * height];
 
-                // 强制将任何图像（无论调色板或对齐方式）重绘到标准的 32 位 ARGB 画布上
                 using (Bitmap bmp32 = new Bitmap(width, height, PixelFormat.Format32bppArgb))
                 {
                     using (Graphics g = Graphics.FromImage(bmp32))
@@ -392,19 +384,15 @@ namespace ParallelKMeansMRI
                     Marshal.Copy(ptr, argbValues, 0, bytes);
                     bmp32.UnlockBits(bmpData);
 
-                    // 转换为纯灰度并紧凑排列，完全剔除 Padding
                     for (int y = 0; y < height; y++)
                     {
                         for (int x = 0; x < width; x++)
                         {
                             int i = (y * stride) + x * 4;
-                            // 32bpp 内存布局为 B G R A，转换为灰阶亮度
                             byte b = argbValues[i];
                             byte g = argbValues[i + 1];
                             byte r = argbValues[i + 2];
                             byte gray = (byte)(0.299 * r + 0.587 * g + 0.114 * b);
-
-                            // 完美对齐的存入，保证 K-Means 不会计算任何废像素！
                             grayValues[y * width + x] = gray;
                         }
                     }
@@ -416,13 +404,12 @@ namespace ParallelKMeansMRI
         // ================= 智能目标检测(Bounding Box)渲染引擎 V3.0 =================
         public static void SaveColorHighlightedImage(byte[] pixels, int width, int height, string path)
         {
-            // 1. 【动态大脑轮廓提取】：自动计算当前图片中“人头”的实际大小，而不是用写死的值
             int headMinX = width, headMaxX = 0, headMinY = height, headMaxY = 0;
             for (int y = 0; y < height; y++)
             {
                 for (int x = 0; x < width; x++)
                 {
-                    if (pixels[y * width + x] > 20) // 灰度大于20认为是非背景（大脑或头骨）
+                    if (pixels[y * width + x] > 20)
                     {
                         if (x < headMinX) headMinX = x;
                         if (x > headMaxX) headMaxX = x;
@@ -431,18 +418,15 @@ namespace ParallelKMeansMRI
                     }
                 }
             }
-            // 异常处理：如果是纯黑图片
             if (headMaxX <= headMinX) { headMinX = 0; headMaxX = width; headMinY = 0; headMaxY = height; }
 
             int headArea = (headMaxX - headMinX) * (headMaxY - headMinY);
             double centerX = (headMinX + headMaxX) / 2.0;
             double centerY = (headMinY + headMaxY) / 2.0;
 
-            // 构建自适应椭圆遮罩：长宽为主体头骨的 38% 和 40%，完美避开外围极亮的头皮脂肪
             double rx2 = Math.Pow((headMaxX - headMinX) * 0.38, 2);
             double ry2 = Math.Pow((headMaxY - headMinY) * 0.40, 2);
 
-            // 2. 【智能多聚类搜索】：提取 K-Means 分配好的 4 种聚类亮度，并从亮到暗排序
             var uniqueClusters = pixels.Distinct().OrderByDescending(v => v).ToList();
 
             bool isTumorFound = false;
@@ -450,10 +434,8 @@ namespace ParallelKMeansMRI
             int bestMinX = width, bestMaxX = 0, bestMinY = height, bestMaxY = 0;
             bool[] visited = new bool[width * height];
 
-            // 从最亮的一级开始往下搜索
             foreach (byte intensity in uniqueClusters)
             {
-                // 如果搜索到了偏暗的正常脑组织（如灰质/白质），直接停止，防止误报
                 if (intensity < 120) continue;
 
                 int largestArea = 0;
@@ -468,7 +450,6 @@ namespace ParallelKMeansMRI
 
                         if (pixels[idx] == intensity && !visited[idx])
                         {
-                            // 遇到属于当前亮度的像素点，先判断是否在自适应安全椭圆内
                             double dx = x - centerX;
                             double dy = y - centerY;
                             if ((dx * dx) / rx2 + (dy * dy) / ry2 > 1.0)
@@ -506,7 +487,6 @@ namespace ParallelKMeansMRI
                                         int nIdx = ny * width + nx;
                                         if (pixels[nIdx] == intensity && !visited[nIdx])
                                         {
-                                            // 蔓延边界限制：斩断与头骨的物理连接
                                             double ndx = nx - centerX;
                                             double ndy = ny - centerY;
                                             if ((ndx * ndx) / rx2 + (ndy * ndy) / ry2 > 1.0)
@@ -532,22 +512,18 @@ namespace ParallelKMeansMRI
                     }
                 }
 
-                // 临床判定绝杀：
-                // 1. 面积必须大于大脑总面积的 0.1% (排除零星噪点)
-                // 2. 面积必须小于大脑总面积的 15% (防止将正常的高亮白质误判为肿瘤)
                 if (largestArea > (headArea * 0.001) && largestArea < (headArea * 0.15))
                 {
                     isTumorFound = true;
-                    targetIntensity = intensity; // 锁定！这就是引发肿瘤病变的聚类层级！
+                    targetIntensity = intensity;
                     bestMinX = currentBestMinX;
                     bestMaxX = currentBestMaxX;
                     bestMinY = currentBestMinY;
                     bestMaxY = currentBestMaxY;
-                    break; // 既然在高亮度里找到了肿瘤，就停止往下搜索更暗的图层
+                    break;
                 }
             }
 
-            // 3. 图像渲染与画框 (Drawing Bounding Box)
             using (Bitmap bmp = new Bitmap(width, height, PixelFormat.Format24bppRgb))
             {
                 BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
@@ -565,10 +541,9 @@ namespace ParallelKMeansMRI
                         int byteIndex = y * bmpData.Stride + x * 3;
                         byte currentIntensity = pixels[pixelIndex];
 
-                        // 默认背景灰度
-                        rgbValues[byteIndex] = currentIntensity;     // Blue
-                        rgbValues[byteIndex + 1] = currentIntensity; // Green
-                        rgbValues[byteIndex + 2] = currentIntensity; // Red
+                        rgbValues[byteIndex] = currentIntensity;
+                        rgbValues[byteIndex + 1] = currentIntensity;
+                        rgbValues[byteIndex + 2] = currentIntensity;
 
                         if (isTumorFound)
                         {
@@ -586,7 +561,6 @@ namespace ParallelKMeansMRI
                                 rgbValues[byteIndex + 1] = 0;
                                 rgbValues[byteIndex + 2] = 255;
                             }
-                            // 只有当该像素的亮度等于我们在上方锁定的【肿瘤亮度层级】时，才会被蒙上红膜
                             else if (currentIntensity == targetIntensity && x >= bestMinX && x <= bestMaxX && y >= bestMinY && y <= bestMaxY)
                             {
                                 rgbValues[byteIndex] = 70;

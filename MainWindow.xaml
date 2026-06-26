@@ -9,7 +9,6 @@
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <!-- Left Panel: Controls -->
         <Border Grid.Column="0" Background="White" CornerRadius="8" Padding="15" Margin="0,0,10,0">
             <Border.Effect>
                 <DropShadowEffect Color="Black" Opacity="0.1" BlurRadius="10" ShadowDepth="2" />
@@ -17,7 +16,7 @@
             <StackPanel>
                 <TextBlock Text="Settings" FontSize="20" FontWeight="Bold" Margin="0,0,0,15"/>
 
-                <TextBlock Text="Select Image" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBlock Text="Select Input Image" FontWeight="SemiBold" Margin="0,0,0,5"/>
                 <Grid Margin="0,0,0,15">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -27,25 +26,33 @@
                     <Button x:Name="BrowseButton" Grid.Column="1" Content="Browse..." Padding="10,5" Click="BrowseButton_Click" Cursor="Hand"/>
                 </Grid>
 
+                <TextBlock Text="Select Output Folder" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <Grid Margin="0,0,0,15">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="OutputPathTextBox" Grid.Column="0" IsReadOnly="True" Margin="0,0,5,0" Padding="5" VerticalContentAlignment="Center" />
+                    <Button x:Name="BrowseOutputButton" Grid.Column="1" Content="Browse..." Padding="10,5" Click="BrowseOutputButton_Click" Cursor="Hand"/>
+                </Grid>
+
                 <TextBlock Text="Select Hardware (ILGPU)" FontWeight="SemiBold" Margin="0,0,0,5"/>
                 <ComboBox x:Name="HardwareComboBox" Margin="0,0,0,20" Padding="5">
                 </ComboBox>
 
-                <Button x:Name="RunButton" Content="Run Benchmark" Background="#2563EB" Foreground="White" 
+                <Button x:Name="RunButton" Content="Run Benchmark" Background="#2563EB" Foreground="White"
                         FontWeight="Bold" Padding="10" Click="RunButton_Click" Cursor="Hand"/>
-                
+
                 <TextBlock x:Name="StatusText" Text="Ready" Margin="0,15,0,0" Foreground="Gray" TextWrapping="Wrap"/>
             </StackPanel>
         </Border>
 
-        <!-- Right Panel: Visuals & Results -->
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="2*" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- Images -->
             <UniformGrid Grid.Row="0" Columns="2" Margin="0,0,0,10">
                 <Border Background="White" CornerRadius="8" Margin="0,0,5,0" Padding="10">
                     <Border.Effect>
@@ -67,7 +74,6 @@
                 </Border>
             </UniformGrid>
 
-            <!-- Results Table -->
             <Border Grid.Row="1" Background="White" CornerRadius="8" Padding="10">
                 <Border.Effect>
                     <DropShadowEffect Color="Black" Opacity="0.1" BlurRadius="10" ShadowDepth="2" />
